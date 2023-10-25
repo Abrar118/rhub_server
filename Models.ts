@@ -73,4 +73,4 @@ interface Bookmark {
   uploadDate: Number;
 }
 
-export { Communities, User, Com_events, Comment, Upload_Log };
+export { Communities, User, Com_events, Comment, Upload_Log, Bookmark };
