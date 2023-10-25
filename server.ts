@@ -392,6 +392,17 @@ app.get("/get_uploads/:sort/:asc/:tag", (req, res) => {
     .catch(() => res.status(500).json("Could not fetch data"));
 });
 
+app.get("/get_upload/:keywords", async (req, res) => {
+  const keyword: string[] = JSON.parse(req.params.keywords);
+
+  const upload = await db
+    .collection<Upload_Log>("upload_log")
+    .findOne({ keywords: { $all: keyword } })
+    .catch(() => res.status(500).json("Could not fetch"));
+
+  res.status(200).json(upload);
+});
+
 app.post("/createCategory", (req, res) => {
   const category = req.body;
   const uploads = db.collection("upload_log");
@@ -422,9 +433,12 @@ app.post("/uploadContent/:type/:tag/:name/:uploader", async (req, res) => {
 
   const updateDocument = {
     name: name,
-    date: new Date(),
+    date: new Date().toISOString(),
     uploader: uploader,
     content: result.secure_url,
+    publicId: result.public_id,
+    resourceType: result.resource_type,
+    type: result.type
   };
 
   upDateFile.$push[type] = updateDocument;
@@ -443,4 +457,58 @@ app.post("/uploadContent/:type/:tag/:name/:uploader", async (req, res) => {
     .collection<Communities>("communities")
     .updateOne({ tag: comTag?.community }, { $inc: { resource: 1 } });
   res.status(200).json(result);
+});
+
+app.delete("/deleteContent/:publicId/:time/:tag/:type/:resourceType", async (req, res) => {
+  const public_id = req.params.publicId;
+  const uploadTime = req.params.time;
+  const tag = req.params.tag;
+  const type = req.params.type;
+  const resourceType = req.params.resourceType;
+
+  const deleteOptions = {
+    type: type,
+    resource_type: resourceType
+  }
+
+  await cloudinary.api.delete_resources([public_id], deleteOptions, async (err, result) => {
+    if (err) res.status(500).json({ error: err.message });
+    else {
+      const deleted = await db
+        .collection("upload_log")
+        .updateOne(
+          { date: uploadTime },
+          { $pull: { academic: { publicId: public_id } } }
+        );
+
+      await db
+        .collection<Communities>("communities")
+        .updateOne({ tag: tag }, { $inc: { resource: -1 } });
+
+      res.status(200).json(deleted);
+    }
+  }).catch(error => {
+    res.status(201).json(error.message);
+  });
+});
+
+app.get("/getAdmin/:tag", async (req, res) => {
+  const comTag = req.params.tag;
+
+  const admin = await db
+    .collection<Communities>("communities")
+    .findOne({ tag: comTag }, { projection: { admin: 1, _id: 0 } });
+
+  res.status(200).json(admin?.admin);
+});
+
+app.post("/changeAccess", async (req, res) => {
+  const access = req.body.access;
+  const keywords: string[] = req.body.keywords;
+
+  const response = await db
+    .collection<Upload_Log>("upload_log")
+    .updateOne({ keywords: { $all: keywords } }, { $set: { access: access } });
+
+  res.status(200).json(response);
 });

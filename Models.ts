@@ -68,4 +68,9 @@ interface Upload_Log {
   community: string;
 }
 
+interface Bookmark {
+  user: Number;
+  uploadDate: Number;
+}
+
 export { Communities, User, Com_events, Comment, Upload_Log };
