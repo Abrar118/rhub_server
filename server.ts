@@ -13,6 +13,7 @@ import {
   Com_events,
   Comment,
   Upload_Log,
+  Bookmark,
 } from "./Models.js";
 
 const app = express();
@@ -392,12 +393,25 @@ app.get("/get_uploads/:sort/:asc/:tag", (req, res) => {
     .catch(() => res.status(500).json("Could not fetch data"));
 });
 
-app.get("/get_upload/:keywords", async (req, res) => {
+app.get("/get_upload/:keywords/:tag", async (req, res) => {
   const keyword: string[] = JSON.parse(req.params.keywords);
+  const tag = req.params.tag;
 
   const upload = await db
     .collection<Upload_Log>("upload_log")
-    .findOne({ keywords: { $all: keyword } })
+    .findOne({ keywords: { $all: keyword }, community: tag })
+    .catch(() => res.status(500).json("Could not fetch"));
+
+  res.status(200).json(upload);
+});
+
+app.get("/get_uploadByTitle/:title/:dateCreated", async (req, res) => {
+  const title = req.params.title; 
+  const dateCreated = req.params.dateCreated;
+
+  const upload = await db
+    .collection<Upload_Log>("upload_log")
+    .findOne({ category_name: title, date: dateCreated })
     .catch(() => res.status(500).json("Could not fetch"));
 
   res.status(200).json(upload);
@@ -438,7 +452,7 @@ app.post("/uploadContent/:type/:tag/:name/:uploader", async (req, res) => {
     content: result.secure_url,
     publicId: result.public_id,
     resourceType: result.resource_type,
-    type: result.type
+    type: result.type,
   };
 
   upDateFile.$push[type] = updateDocument;
@@ -459,38 +473,43 @@ app.post("/uploadContent/:type/:tag/:name/:uploader", async (req, res) => {
   res.status(200).json(result);
 });
 
-app.delete("/deleteContent/:publicId/:time/:tag/:type/:resourceType", async (req, res) => {
-  const public_id = req.params.publicId;
-  const uploadTime = req.params.time;
-  const tag = req.params.tag;
-  const type = req.params.type;
-  const resourceType = req.params.resourceType;
+app.delete(
+  "/deleteContent/:publicId/:time/:tag/:type/:resourceType",
+  async (req, res) => {
+    const public_id = req.params.publicId;
+    const uploadTime = req.params.time;
+    const tag = req.params.tag;
+    const type = req.params.type;
+    const resourceType = req.params.resourceType;
 
-  const deleteOptions = {
-    type: type,
-    resource_type: resourceType
+    const deleteOptions = {
+      type: type,
+      resource_type: resourceType,
+    };
+
+    await cloudinary.api
+      .delete_resources([public_id], deleteOptions, async (err, result) => {
+        if (err) res.status(500).json({ error: err.message });
+        else {
+          const deleted = await db
+            .collection("upload_log")
+            .updateOne(
+              { date: uploadTime },
+              { $pull: { academic: { publicId: public_id } } }
+            );
+
+          await db
+            .collection<Communities>("communities")
+            .updateOne({ tag: tag }, { $inc: { resource: -1 } });
+
+          res.status(200).json(deleted);
+        }
+      })
+      .catch((error) => {
+        res.status(201).json(error.message);
+      });
   }
-
-  await cloudinary.api.delete_resources([public_id], deleteOptions, async (err, result) => {
-    if (err) res.status(500).json({ error: err.message });
-    else {
-      const deleted = await db
-        .collection("upload_log")
-        .updateOne(
-          { date: uploadTime },
-          { $pull: { academic: { publicId: public_id } } }
-        );
-
-      await db
-        .collection<Communities>("communities")
-        .updateOne({ tag: tag }, { $inc: { resource: -1 } });
-
-      res.status(200).json(deleted);
-    }
-  }).catch(error => {
-    res.status(201).json(error.message);
-  });
-});
+);
 
 app.get("/getAdmin/:tag", async (req, res) => {
   const comTag = req.params.tag;
@@ -509,6 +528,59 @@ app.post("/changeAccess", async (req, res) => {
   const response = await db
     .collection<Upload_Log>("upload_log")
     .updateOne({ keywords: { $all: keywords } }, { $set: { access: access } });
+
+  res.status(200).json(response);
+});
+
+app.post("/insertBookmark", async (req, res) => {
+  const bookmark = req.body;
+
+  const response = await db
+    .collection<Bookmark>("bookmarks")
+    .insertOne(bookmark)
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
+
+  res.status(200).json(response);
+});
+
+app.get("/getBookmarks/:userId/:sortOption/:order", async (req, res) => {
+  const userId = Number(req.params.userId);
+  const sortOption = req.params.sortOption;
+  const order = Number(req.params.order);
+  const title = req.query.title as string;
+  const sort: any = {};
+  sort[sortOption] = order;
+
+  let find: { user: number; title?: Object } = {
+    user: userId,
+  };
+
+  if (title) find.title = { $regex: `.*${title}.*`, $options: "i" };
+
+  const response = await db
+    .collection<Bookmark>("bookmarks")
+    .find(find)
+    .sort(sort)
+    .toArray()
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
+
+  res.status(200).json(response);
+});
+
+app.delete("/deleteBookmark/:userId/:title", async (req, res) => {
+  const userId = Number(req.params.userId);
+  const title = req.params.title;
+
+  const response = await db
+    .collection<Bookmark>("bookmarks")
+    .deleteOne({ user: userId, title: title })
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
 
   res.status(200).json(response);
 });

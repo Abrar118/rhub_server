@@ -71,6 +71,9 @@ interface Upload_Log {
 interface Bookmark {
   user: Number;
   uploadDate: Number;
+  title: string;
+  bookmarkDate: string;
+  comTag: string;
 }
 
 export { Communities, User, Com_events, Comment, Upload_Log, Bookmark };
