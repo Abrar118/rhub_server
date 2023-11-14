@@ -8,6 +8,15 @@ interface Communities {
   admin: number;
   com_image: string;
   privacy: string;
+  reviews: Review[];
+}
+
+interface Review {
+  name: string;
+  student_id: number;
+  date: string;
+  rating: number;
+  feedback: string;
 }
 
 interface User {
@@ -45,27 +54,20 @@ interface Upload_Log {
   date: string;
   description: string;
   keywords: string[];
-  academic: {
-    name: string;
-    date: string;
-    uploader: Number;
-    content: string;
-  };
-  student: {
-    name: string;
-    date: string;
-    uploader: Number;
-    content: string;
-  };
-
-  misc: {
-    name: string;
-    date: string;
-    uploader: Number;
-    content: string;
-  };
-
+  academic: ContentTypes;
+  student: ContentTypes;
+  misc: ContentTypes;
   community: string;
+}
+
+interface ContentTypes {
+  name?: string;
+  date?: string;
+  uploader?: Number;
+  content?: string;
+  publicId?: string;
+  resourceType?: string;
+  type?: string;
 }
 
 interface Bookmark {
@@ -76,4 +78,37 @@ interface Bookmark {
   comTag: string;
 }
 
-export { Communities, User, Com_events, Comment, Upload_Log, Bookmark };
+interface Com_request {
+  name: string;
+  id: number;
+  tag: string;
+  email: string;
+}
+
+interface FAQ {
+  question: string;
+  subtitle: string;
+  written_by: string;
+  updated_on: string;
+  description: string;
+}
+
+interface Passwords {
+  oldPassword: string;
+  password: string;
+  student_id: number;
+}
+
+export {
+  Communities,
+  User,
+  Com_events,
+  Comment,
+  Upload_Log,
+  Bookmark,
+  Com_request,
+  FAQ,
+  Passwords,
+  ContentTypes,
+  Review,
+};

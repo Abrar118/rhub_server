@@ -13,6 +13,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@tensorflow-models/qna": "^1.0.2",
+    "@tensorflow/tfjs": "^4.13.0",
     "axios": "^1.5.0",
     "bcrypt": "^5.1.1",
     "body-parser": "^1.20.2",
@@ -22,9 +24,11 @@
     "express-jwt": "^8.4.1",
     "jwks-rsa": "^3.0.1",
     "mongodb": "^6.1.0",
+    "socket.io": "^4.7.2",
     "ts-node-dev": "^2.0.0"
   },
   "devDependencies": {
+    "@types/bcrypt": "^5.0.1",
     "@types/cors": "^2.8.14",
     "@types/express": "^4.17.19",
     "@types/node": "^20.8.6",
