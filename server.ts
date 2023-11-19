@@ -7,7 +7,6 @@ import {
   v2 as cloudinary,
 } from "cloudinary";
 import {
-  ChangeStream,
   ChangeStreamDocument,
   Db,
   InsertOneResult,
@@ -24,6 +23,10 @@ import {
   FAQ,
   Passwords,
   Review,
+  Reviews,
+  Notifications,
+  NotificationInstance,
+  Invitation,
 } from "./Models.js";
 
 import { loadModel, getContext } from "./NLP.js";
@@ -69,31 +72,37 @@ const db = {
   com_request: db_instance.collection<Com_request>("com_request"),
   faqs: db_instance.collection<FAQ>("faqs"),
   passwords: db_instance.collection<Passwords>("passwords"),
+  reviews: db_instance.collection<Reviews>("reviews"),
+  notifications: db_instance.collection<Notifications>("notifications"),
 };
 
 //change streams
-db.communities
-  .watch()
-  .on(
-    "change",
-    async (
-      changeData: ChangeStream<Communities, ChangeStreamDocument<Communities>>
-    ) => {
-      const data = await changeData.next();
-      if (data.operationType === "update") {
-        const fullDocument = data.fullDocument as Communities;
-        const reviews: Review[] = fullDocument.reviews;
-        const averageRating =
-          reviews.reduce((a: any, b: any) => a.rating + b.rating, 0) /
-          reviews.length;
+const reviewChangeStream = db.reviews.watch([], {
+  fullDocument: "updateLookup",
+});
+reviewChangeStream.on(
+  "change",
+  async (changeData: ChangeStreamDocument<Reviews>) => {
+    if (changeData.operationType === "update") {
+      const fullDocument = changeData.fullDocument as Reviews;
+      const reviews: Review[] = fullDocument.reviews;
+      const getCommunity = await db.communities.findOne(
+        { tag: fullDocument.tag },
+        { projection: { rating: 1, _id: 0 } }
+      );
 
-        await db.communities.updateOne(
-          { tag: fullDocument.tag },
-          { $set: { rating: averageRating } }
-        );
-      }
+      const prevRating = getCommunity?.rating as number;
+
+      const averageRating =
+        (prevRating + reviews[reviews.length - 1].rating) / reviews.length;
+
+      await db.communities.updateOne(
+        { tag: fullDocument.tag },
+        { $set: { rating: Math.round(averageRating) } }
+      );
     }
-  );
+  }
+);
 
 // server listening
 app.listen(process.env.PORT, () => {
@@ -208,6 +217,12 @@ app.post("/insertUser", async (req, res) => {
       .catch((err) => {
         res.status(500).json({ err: "Could not create user" });
       });
+
+    await db.notifications.insertOne({
+      student_id: user.student_id,
+      notifications: [],
+    });
+
     res.status(200).json(inserted);
   }
 });
@@ -246,8 +261,10 @@ app.patch("/updatePassword/:studentId", async (req, res) => {
 });
 
 app.patch("/addComToUser", (req, res) => {
-  const user = req.body.userId;
+  const user = Number(req.body.userId);
   const tag = req.body.tag;
+
+  console.log(user, tag);
 
   db.users
     .updateOne({ student_id: user }, { $push: { community: tag } })
@@ -270,6 +287,126 @@ app.post("/uploadAvatar", async (req, res) => {
     });
 
   res.status(200).json(result);
+});
+
+//notifications
+
+app.get("/getNotifications/:studentId", async (req, res) => {
+  const studentId = Number(req.params.studentId);
+
+  const response = (await db.notifications
+    .findOne({
+      student_id: studentId,
+    })
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    })) as WithId<Notifications>;
+
+  res.status(200).json(response.notifications);
+});
+
+app.patch("/sendNotification/:studentId", async (req, res) => {
+  const studentId = Number(req.params.studentId);
+  const notification: NotificationInstance = req.body;
+
+  if (notification.type === "invitation") {
+    const invitaion = notification as Invitation;
+    const comTag = invitaion.comTag;
+
+    const response = await db.users.findOne({
+      student_id: studentId,
+      community: comTag,
+    });
+    if (response) {
+      res.status(201).json("Already a member");
+      return;
+    }
+
+    const pre_response = await db.notifications.findOne({
+      student_id: studentId,
+      "notifications.type": invitaion.type,
+      "notifications.title": invitaion.title,
+      "notifications.messageBody": invitaion.messageBody,
+      "notifications.comTag": invitaion.comTag,
+    });
+
+    if (pre_response) {
+      const pre_update = await db.notifications.updateOne(
+        {
+          student_id: studentId,
+          "notifications.type": invitaion.type,
+          "notifications.title": invitaion.title,
+          "notifications.messageBody": invitaion.messageBody,
+          "notifications.comTag": invitaion.comTag,
+        },
+        { $set: { "notifications.$.date": invitaion.date } }
+      );
+      res.status(200).json(pre_update);
+      return;
+    }
+  }
+
+  const response = await db.notifications
+    .updateOne(
+      { student_id: studentId },
+      { $push: { notifications: notification } }
+    )
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
+
+  res.status(200).json(response);
+});
+
+app.patch("/updateNotificationStatus/:studentId", async (req, res) => {
+  const studentId = Number(req.params.studentId);
+  const notification = req.body;
+
+  const response = await db.notifications
+    .updateOne(
+      { student_id: studentId, notifications: notification },
+      { $set: { "notifications.$.status": "read" } }
+    )
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
+
+  res.status(200).json(response);
+});
+
+app.patch("/deleteNotification/:studentId", async (req, res) => {
+  const studentId = Number(req.params.studentId);
+  const notification = req.body;
+
+  const response = await db.notifications
+    .updateOne(
+      { student_id: studentId },
+      { $pull: { notifications: notification } }
+    )
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
+
+  res.status(200).json(response);
+});
+
+app.patch("/acceptInvitation/:studentId", async (req, res) => {
+  const studentId = Number(req.params.studentId);
+  const comTag = req.body.comTag;
+
+  const response = await db.users
+    .updateOne({ student_id: studentId }, { $push: { community: comTag } })
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
+
+  await db.communities
+    .updateOne({ tag: comTag }, { $inc: { members: 1 } })
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
+
+  res.status(200).json(response);
 });
 
 //community APIs
@@ -369,46 +506,76 @@ app.get("/get_communityByTag/:tag", (req, res) => {
     });
 });
 
-app.post("/insertCommunity", (req, res) => {
+app.post("/insertCommunity", async (req, res) => {
   const community = req.body;
-  db.communities
-    .insertOne(community)
-    .then((result) => {
-      res.status(200).json(result);
-    })
-    .catch((err) => {
-      res
-        .status(500)
-        .json({ err: "Tag has to be unique for every community." });
-    });
+  const response = await db.communities.insertOne(community).catch((err) => {
+    res.status(500).json({ err: "Tag has to be unique for every community." });
+  });
+
+  if (response) {
+    await db.reviews.insertOne({ tag: community.tag, reviews: [] });
+  }
+
+  res.status(200).json(response);
 });
 
-app.get("/getAdmin/:tag", async (req, res) => {
-  const comTag = req.params.tag;
-
-  const admin = await db.communities.findOne(
-    { tag: comTag },
-    { projection: { admin: 1, _id: 0 } }
-  );
-
-  res.status(200).json(admin?.admin);
-});
-
-app.delete("/deleteCom/:tag", (req, res) => {
+app.delete("/deleteCom/:tag", async (req, res) => {
   const tag = req.params.tag;
 
-  const community = db.communities;
+  const community = await db.communities.findOne(
+    { tag: tag },
+    { projection: { imagePublicId: 1, _id: 0 } }
+  );
 
-  community
-    .deleteOne({ tag: tag })
-    .then((response) => {
-      res.status(200).json(response);
-    })
-    .catch((err) => {
-      res
-        .status(500)
-        .json({ err: "Tag has to be unique for every community." });
+  if (community && community.imagePublicId !== "") {
+    const public_id = community.imagePublicId;
+
+    await cloudinary.api
+      .delete_resources([public_id], { type: "upload", resource_type: "image" })
+      .catch((err) => {
+        res.status(500).json({ error: err.message });
+      });
+  }
+
+  const deletedCom = await db.communities.deleteOne({ tag: tag }).catch(() => {
+    res.status(500).json("Could not delete community");
+  });
+
+  if (deletedCom) {
+    await db.reviews.deleteOne({ tag: tag }).catch(() => {
+      res.status(500).json("Could not delete reviews");
     });
+
+    await db.com_events.deleteMany({ tag: [tag] }).catch(() => {
+      res.status(500).json("Could not delete events");
+    });
+
+    await db.com_events
+      .updateMany({ tag: tag }, { $pull: { tag: tag } })
+      .catch(() => {
+        res.status(500).json("Could not delete events");
+      });
+
+    await db.com_request.deleteMany({ tag: tag }).catch(() => {
+      res.status(500).json("Could not delete requests");
+    });
+
+    await db.bookmarks.deleteMany({ comTag: tag }).catch(() => {
+      res.status(500).json("Could not delete bookmarks");
+    });
+
+    await db.upload_log.deleteMany({ community: tag }).catch(() => {
+      res.status(500).json("Could not delete uploads");
+    });
+
+    await db.users
+      .updateMany({ community: tag }, { $pull: { community: tag } })
+      .catch(() => {
+        res.status(500).json("Could not delete com from users");
+      });
+  }
+
+  res.status(200).json(deletedCom);
 });
 
 app.post("/uploadComImage", async (req, res) => {
@@ -424,7 +591,7 @@ app.post("/uploadComImage", async (req, res) => {
 
   const ack = await db.communities.updateOne(
     { tag: tag },
-    { $set: { com_image: result.secure_url } }
+    { $set: { com_image: result.secure_url, imagePublicId: result.public_id } }
   );
 
   res.status(200).json(ack);
@@ -470,11 +637,34 @@ app.patch("/handleRequest", async (req, res) => {
     await db.users
       .updateOne({ student_id: user }, { $push: { community: tag } })
       .catch(() => res.status(500).json("Could not update data"));
+
+    await db.communities.updateOne({ tag: tag }, { $inc: { members: 1 } });
   }
 
   const response = await db.com_request
     .deleteOne({ tag: tag, id: user })
     .catch(() => res.status(500).json("Could not delete data"));
+
+  res.status(200).json(response);
+});
+
+app.patch("/rateCom/:tag", async (req, res) => {
+  const review = req.body;
+  const tag = req.params.tag;
+
+  const pre_response = await db.reviews.findOne({
+    tag: tag,
+    "reviews.student_id": review.student_id,
+  });
+
+  if (pre_response) {
+    res.status(201).json("Already reviewed");
+    return;
+  }
+
+  const response = await db.reviews
+    .updateOne({ tag: tag }, { $addToSet: { reviews: review } })
+    .catch(() => res.status(500).json("Could not insert data"));
 
   res.status(200).json(response);
 });
@@ -633,13 +823,14 @@ app.post("/uploadContent/:type/:tag/:name/:uploader", async (req, res) => {
 });
 
 app.delete(
-  "/deleteContent/:publicId/:time/:tag/:type/:resourceType",
+  "/deleteContent/:publicId/:time/:tag/:type/:resourceType/:mainListType",
   async (req, res) => {
     const public_id = req.params.publicId;
     const uploadTime = req.params.time;
     const tag = req.params.tag;
     const type = req.params.type;
     const resourceType = req.params.resourceType;
+    const mainListType = req.params.mainListType;
 
     const deleteOptions = {
       type: type,
@@ -651,9 +842,12 @@ app.delete(
         if (err) res.status(500).json({ error: err.message });
         else {
           const delete_content: any = { publicId: public_id };
+          const delete_object: any = {};
+          delete_object[mainListType] = delete_content;
+
           const deleted = await db.upload_log.updateOne(
             { date: uploadTime },
-            { $pull: { academic: delete_content } }
+            { $pull: delete_object }
           );
 
           await db.communities.updateOne(

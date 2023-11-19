@@ -8,6 +8,11 @@ interface Communities {
   admin: number;
   com_image: string;
   privacy: string;
+  imagePublicId: string;
+}
+
+interface Reviews {
+  tag: string;
   reviews: Review[];
 }
 
@@ -99,6 +104,24 @@ interface Passwords {
   student_id: number;
 }
 
+interface Notifications {
+  student_id: number;
+  notifications: NotificationInstance[];
+}
+
+interface NotificationInstance {
+  messageBody: string;
+  title: string;
+  date: string;
+  type: string;
+  status: string;
+}
+
+interface Invitation extends NotificationInstance {
+  comTag: string;
+  comName: string;
+}
+
 export {
   Communities,
   User,
@@ -110,5 +133,9 @@ export {
   FAQ,
   Passwords,
   ContentTypes,
+  Reviews,
   Review,
+  Notifications,
+  NotificationInstance,
+  Invitation,
 };
