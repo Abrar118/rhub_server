@@ -120,7 +120,14 @@ interface NotificationInstance {
 interface Invitation extends NotificationInstance {
   comTag: string;
   comName: string;
+  responded: boolean;
 }
+
+interface OnlineUser {
+  student_id: number,
+  socket_id: string,
+};
+
 
 export {
   Communities,
@@ -138,4 +145,5 @@ export {
   Notifications,
   NotificationInstance,
   Invitation,
+  OnlineUser
 };

@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import { Server } from "socket.io";
+import http from "http";
 import {
   UploadApiOptions,
   UploadApiResponse,
@@ -27,10 +29,12 @@ import {
   Notifications,
   NotificationInstance,
   Invitation,
+  OnlineUser,
 } from "./Models.js";
 
 import { loadModel, getContext } from "./NLP.js";
 import { QuestionAndAnswer } from "@tensorflow-models/qna";
+import { on } from "events";
 
 const app = express();
 let modelLoaded = false;
@@ -41,6 +45,14 @@ app.use(cors());
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ limit: "20mb", extended: true }));
 dotenv.config();
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
+  },
+});
 
 const ATLAS = process.env.ATLAS as string;
 const DATABASE = process.env.DATABASE as string;
@@ -105,8 +117,81 @@ reviewChangeStream.on(
 );
 
 // server listening
-app.listen(process.env.PORT, () => {
+server.listen(process.env.PORT, () => {
   console.log("Server listening to port " + process.env.PORT);
+  console.log("Socket connected ");
+});
+
+//socket connections
+let onlineUsers: OnlineUser[] = [];
+let onLineForChat: number[] = [];
+const addOnlineUser = (student_id: number, socket_id: string) => {
+  const userDetails: OnlineUser = {
+    student_id: student_id,
+    socket_id: socket_id,
+  };
+  const user = onlineUsers.indexOf(userDetails);
+  if (user === -1) {
+    onlineUsers.push(userDetails);
+    onLineForChat.push(student_id);
+  } else onlineUsers[user] = userDetails;
+
+  onlineUsers = onlineUsers.filter(
+    (user, index, self) =>
+      index === self.findIndex((t) => t.student_id === user.student_id)
+  );
+
+  onLineForChat = onLineForChat.filter(
+    (user, index, self) => index === self.indexOf(user)
+  );
+};
+
+const deleteOnlineUser = (socket_id: string) => {
+  onlineUsers = onlineUsers.filter((user) => user.socket_id !== socket_id);
+};
+
+io.on("connection", (socket) => {
+  socket.on("addOnlineUser", (data: OnlineUser) => {
+    addOnlineUser(data.student_id, socket.id);
+    console.log(onlineUsers);
+    console.log(onLineForChat);
+  });
+
+  socket.on("joinComChat", (data) => {
+    socket.join(data.comTag);
+  });
+
+  socket.on("sendInvitation", async (data) => {
+    const user = onlineUsers.find(
+      (user) => user.student_id === data.invitationId
+    );
+
+    if (user) {
+      const sender = await db.users.findOne(
+        { student_id: data.sender },
+        { projection: { name: 1, _id: 0 } }
+      );
+
+      console.log(user, sender);
+
+      io.to(user.socket_id).emit(
+        "sendInvitationNotification",
+        `${sender?.name} has invited you to join ${data.comName}`
+      );
+    }
+  });
+
+  socket.on("sendMessage", async (data) => {
+    // const user = onlineUsers.find((user) => user.student_id === data.receiver);
+    io.to(data.room).emit("receiveMessage", data);
+  });
+
+  socket.on("logOut", (student_id: number) => {
+    deleteOnlineUser(socket.id);
+  });
+  socket.on("disconnect", () => {
+    deleteOnlineUser(socket.id);
+  });
 });
 
 //students API
@@ -170,6 +255,33 @@ app.get("/getStudentByEmail/:email/:password", async (req, res) => {
   }
 
   res.status(status).json(data);
+});
+
+app.get("/getOnlineUsers/:comTag", async (req, res) => {
+  const comTag = req.params.comTag;
+
+  const response = await db.users
+    .find(
+      { community: comTag, student_id: { $in: onLineForChat } },
+      { projection: { name: 1, avatar: 1, _id: 0 } }
+    )
+    .sort({ name: 1 })
+    .toArray()
+    .catch((err) => res.status(500).json({ error: err.message }));
+
+  const res2 = await db.users
+    .find(
+      {
+        community: comTag,
+        student_id: { $nin: onLineForChat },
+      },
+      { projection: { name: 1, avatar: 1, _id: 0 } }
+    )
+    .sort({ name: 1 })
+    .toArray()
+    .catch((err) => res.status(500).json({ error: err.message }));
+
+  res.status(200).json({ online: response, offline: res2 });
 });
 
 app.get("/getAuthStatus/:email", (req, res) => {
@@ -305,13 +417,22 @@ app.get("/getNotifications/:studentId", async (req, res) => {
   res.status(200).json(response.notifications);
 });
 
-app.patch("/sendNotification/:studentId", async (req, res) => {
+app.patch("/sendInvitation/:studentId", async (req, res) => {
   const studentId = Number(req.params.studentId);
   const notification: NotificationInstance = req.body;
 
   if (notification.type === "invitation") {
     const invitaion = notification as Invitation;
     const comTag = invitaion.comTag;
+
+    const userExist = await db.users.findOne({
+      student_id: studentId,
+    });
+
+    if (!userExist) {
+      res.status(202).json("User does not exist");
+      return;
+    }
 
     const response = await db.users.findOne({
       student_id: studentId,
@@ -393,6 +514,7 @@ app.patch("/deleteNotification/:studentId", async (req, res) => {
 app.patch("/acceptInvitation/:studentId", async (req, res) => {
   const studentId = Number(req.params.studentId);
   const comTag = req.body.comTag;
+  const invitaion = req.body as Invitation;
 
   const response = await db.users
     .updateOne({ student_id: studentId }, { $push: { community: comTag } })
@@ -405,6 +527,16 @@ app.patch("/acceptInvitation/:studentId", async (req, res) => {
     .catch((err) => {
       res.status(500).json({ error: err.message });
     });
+
+  await db.notifications.updateOne(
+    { student_id: studentId, notifications: invitaion },
+    {
+      $set: {
+        "notifications.$.status": "read",
+        "notifications.$.responded": true,
+      },
+    }
+  );
 
   res.status(200).json(response);
 });

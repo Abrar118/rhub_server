@@ -1,4 +1,5 @@
 import bcrypt from "bcrypt";
-const arr = [1, 2, 3,4];
-const average = Math.floor(arr.reduce((acc, cur) => acc + cur, 0) / arr.length);
-console.log(average);
+const ar = [{ id: 1 }, { id: 2 }, { id: 3 }];
+
+const something = ar.find((item) => item.id === 2);
+console.log(something);
