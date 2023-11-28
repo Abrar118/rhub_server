@@ -49,7 +49,7 @@ dotenv.config();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.CURRENT_PHASE,
+    origin: "https://rhub-6bde5.web.app",
     methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
   },
 });
@@ -162,6 +162,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("sendInvitation", async (data) => {
+    console.log("sendInvitation");
     const user = onlineUsers.find(
       (user) => user.student_id === data.invitationId
     );
@@ -460,7 +461,7 @@ app.patch("/sendInvitation/:studentId", async (req, res) => {
           "notifications.messageBody": invitaion.messageBody,
           "notifications.comTag": invitaion.comTag,
         },
-        { $set: { "notifications.$.date": invitaion.date } }
+        { $set: { "notifications.$.date": invitaion.date, status: "unread" } }
       );
       res.status(200).json(pre_update);
       return;
@@ -704,6 +705,16 @@ app.delete("/deleteCom/:tag", async (req, res) => {
       .updateMany({ community: tag }, { $pull: { community: tag } })
       .catch(() => {
         res.status(500).json("Could not delete com from users");
+      });
+
+    const pullTag: any = { comTag: tag };
+    await db.notifications
+      .updateMany(
+        { "notifications.comTag": tag },
+        { $pull: { notifications: pullTag } }
+      )
+      .catch(() => {
+        res.status(500).json("Could not delete notifications");
       });
   }
 
