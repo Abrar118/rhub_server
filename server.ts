@@ -49,7 +49,8 @@ dotenv.config();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "https://rhub-6bde5.web.app",
+    // origin: "https://rhub-6bde5.web.app",
+    origin: "http://localhost:5173",
     methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
   },
 });
@@ -146,8 +147,9 @@ const addOnlineUser = (student_id: number, socket_id: string) => {
   );
 };
 
-const deleteOnlineUser = (socket_id: string) => {
+const deleteOnlineUser = (socket_id: string, student_id: number) => {
   onlineUsers = onlineUsers.filter((user) => user.socket_id !== socket_id);
+  onLineForChat = onLineForChat.filter((user) => user !== student_id);
 };
 
 io.on("connection", (socket) => {
@@ -155,6 +157,8 @@ io.on("connection", (socket) => {
     addOnlineUser(data.student_id, socket.id);
     console.log(onlineUsers);
     console.log(onLineForChat);
+
+    socket.join(data.student_id.toString());
   });
 
   socket.on("joinComChat", (data) => {
@@ -173,9 +177,7 @@ io.on("connection", (socket) => {
         { projection: { name: 1, _id: 0 } }
       );
 
-      console.log(user, sender);
-
-      io.to(user.socket_id).emit(
+      io.to(user.student_id.toString()).emit(
         "sendInvitationNotification",
         `${sender?.name} has invited you to join ${data.comName}`
       );
@@ -188,10 +190,10 @@ io.on("connection", (socket) => {
   });
 
   socket.on("logOut", (student_id: number) => {
-    deleteOnlineUser(socket.id);
+    deleteOnlineUser(socket.id, student_id);
   });
   socket.on("disconnect", () => {
-    deleteOnlineUser(socket.id);
+    deleteOnlineUser(socket.id, -1);
   });
 });
 
@@ -400,6 +402,45 @@ app.post("/uploadAvatar", async (req, res) => {
     });
 
   res.status(200).json(result);
+});
+
+app.get("/getMyUploads/:studentId/:comTags", async (req, res) => {
+  const studentId = Number(req.params.studentId);
+  const comTags: string[] = JSON.parse(req.params.comTags);
+
+  const response = (await db.upload_log
+    .find(
+      { community: { $in: comTags }, "academic.uploader": studentId },
+      { projection: { "academic.$": 1, _id: 0 } }
+    )
+    .toArray()
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    })) as WithId<Upload_Log>[];
+
+  const response2 = (await db.upload_log
+    .find(
+      { community: { $in: comTags }, "student.uploader": studentId },
+      { projection: { "student.$": 1, _id: 0 } }
+    )
+    .toArray()
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    })) as WithId<Upload_Log>[];
+
+  const response3 = (await db.upload_log
+    .find(
+      { community: { $in: comTags }, "misc.uploader": studentId },
+      { projection: { "misc.$": 1, _id: 0 } }
+    )
+    .toArray()
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    })) as WithId<Upload_Log>[];
+
+  res
+    .status(200)
+    .json([response[0]?.academic, response2[0]?.student, response3[0]?.misc]);
 });
 
 //notifications
@@ -652,8 +693,19 @@ app.post("/insertCommunity", async (req, res) => {
   res.status(200).json(response);
 });
 
-app.delete("/deleteCom/:tag", async (req, res) => {
+app.delete("/deleteCom/:tag/:showDelete/:studentId", async (req, res) => {
   const tag = req.params.tag;
+  const showDelete = req.params.showDelete === "admin";
+  const studentId = Number(req.params.studentId);
+
+  if (!showDelete) {
+    await db.users.updateOne(
+      { student_id: studentId },
+      { $pull: { community: tag } }
+    );
+    res.status(200).json("Deleted");
+    return;
+  }
 
   const community = await db.communities.findOne(
     { tag: tag },
@@ -941,7 +993,7 @@ app.post("/uploadContent/:type/:tag/:name/:uploader", async (req, res) => {
   const updateDocument = {
     name: name,
     date: new Date().toISOString(),
-    uploader: uploader,
+    uploader: Number(uploader),
     content: result.secure_url,
     publicId: result.public_id,
     resourceType: result.resource_type,
