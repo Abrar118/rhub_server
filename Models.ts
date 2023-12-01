@@ -37,11 +37,12 @@ interface User {
   authenticated: number;
   department: string;
   community: string[];
+  publicId: string;
 }
 
 interface Comment {
   name: string;
-  id: number;
+  body: string;
 }
 
 interface Com_events {
@@ -63,6 +64,7 @@ interface Upload_Log {
   student: ContentTypes;
   misc: ContentTypes;
   community: string;
+  logNo: number;
 }
 
 interface ContentTypes {
@@ -77,10 +79,11 @@ interface ContentTypes {
 
 interface Bookmark {
   user: Number;
-  uploadDate: Number;
   title: string;
   bookmarkDate: string;
   comTag: string;
+  uploadLogNo: number;
+  bookmarkNo: number;
 }
 
 interface Com_request {
@@ -124,10 +127,9 @@ interface Invitation extends NotificationInstance {
 }
 
 interface OnlineUser {
-  student_id: number,
-  socket_id: string,
-};
-
+  student_id: number;
+  socket_id: string;
+}
 
 export {
   Communities,
@@ -145,5 +147,5 @@ export {
   Notifications,
   NotificationInstance,
   Invitation,
-  OnlineUser
+  OnlineUser,
 };

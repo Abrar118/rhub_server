@@ -393,13 +393,27 @@ app.patch("/addComToUser", (req, res) => {
 
 app.post("/uploadAvatar", async (req, res) => {
   const filePath = req.body.image;
+  const publicId = req.body.publicId;
   // console.log(filePath);
 
-  const result = await cloudinary.uploader
+  if (publicId !== process.env.AVATAR_PUBLIC_ID) {
+    const res = await cloudinary.api
+      .delete_resources([publicId], { type: "upload", resource_type: "image" })
+      .catch((err) => {
+        res.status(500).json({ error: err.message });
+      });
+  }
+
+  const result = (await cloudinary.uploader
     .upload(filePath, cloudinaryOption)
     .catch((err) => {
       res.status(500).json({ error: err.message });
-    });
+    })) as UploadApiResponse;
+
+  const ack = await db.users.updateOne(
+    { student_id: Number(req.body.studentId) },
+    { $set: { avatar: result.secure_url, publicId: result.public_id } }
+  );
 
   res.status(200).json(result);
 });
@@ -693,19 +707,27 @@ app.post("/insertCommunity", async (req, res) => {
   res.status(200).json(response);
 });
 
-app.delete("/deleteCom/:tag/:showDelete/:studentId", async (req, res) => {
-  const tag = req.params.tag;
-  const showDelete = req.params.showDelete === "admin";
-  const studentId = Number(req.params.studentId);
+app.patch("/leaveCommunity", async (req, res) => {
+  const tag = req.body.tag;
+  const studentId = Number(req.body.studentId);
 
-  if (!showDelete) {
-    await db.users.updateOne(
-      { student_id: studentId },
-      { $pull: { community: tag } }
-    );
-    res.status(200).json("Deleted");
-    return;
-  }
+  await db.users
+    .updateOne({ student_id: studentId }, { $pull: { community: tag } })
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
+
+  await db.communities
+    .updateOne({ tag: tag }, { $inc: { members: -1 } })
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    });
+
+  res.status(200).json("Left community");
+});
+
+app.delete("/deleteCom/:tag", async (req, res) => {
+  const tag = req.params.tag;
 
   const community = await db.communities.findOne(
     { tag: tag },
@@ -776,7 +798,16 @@ app.delete("/deleteCom/:tag/:showDelete/:studentId", async (req, res) => {
 app.post("/uploadComImage", async (req, res) => {
   const filePath = req.body.image;
   const tag = req.body.tag;
+  const publicId = req.body.publicId;
   // console.log(filePath);
+
+  if (publicId !== process.env.COM_AVATAR_PUBLIC_ID) {
+    const res = await cloudinary.api
+      .delete_resources([publicId], { type: "upload", resource_type: "image" })
+      .catch((err) => {
+        res.status(500).json({ error: err.message });
+      });
+  }
 
   const result = (await cloudinary.uploader
     .upload(filePath, cloudinaryOption)
@@ -789,7 +820,7 @@ app.post("/uploadComImage", async (req, res) => {
     { $set: { com_image: result.secure_url, imagePublicId: result.public_id } }
   );
 
-  res.status(200).json(ack);
+  res.status(200).json(result);
 });
 
 app.post("/insertRequest", async (req, res) => {
@@ -940,12 +971,12 @@ app.get("/get_uploads/:sort/:asc/:tag", (req, res) => {
     .catch(() => res.status(500).json("Could not fetch data"));
 });
 
-app.get("/get_upload/:keywords/:tag", async (req, res) => {
-  const keyword: string[] = JSON.parse(req.params.keywords);
+app.get("/get_upload/:logNo/:tag", async (req, res) => {
+  const logNo = Number(req.params.logNo);
   const tag = req.params.tag;
 
   const upload = await db.upload_log
-    .findOne({ keywords: { $all: keyword }, community: tag })
+    .findOne({ logNo: logNo, community: tag })
     .catch(() => res.status(500).json("Could not fetch"));
 
   res.status(200).json(upload);
@@ -960,6 +991,14 @@ app.get("/get_uploadByTitle/:title/:dateCreated", async (req, res) => {
     .catch(() => res.status(500).json("Could not fetch"));
 
   res.status(200).json(upload);
+});
+
+app.get("/get_upload_count", async (req, res) => {
+  const count = (await db.upload_log.estimatedDocumentCount().catch(() => {
+    res.status(500).json("Could not fetch data");
+  })) as number;
+
+  res.status(200).json(count);
 });
 
 app.post("/createCategory", (req, res) => {
@@ -1018,10 +1057,10 @@ app.post("/uploadContent/:type/:tag/:name/:uploader", async (req, res) => {
 });
 
 app.delete(
-  "/deleteContent/:publicId/:time/:tag/:type/:resourceType/:mainListType",
+  "/deleteContent/:publicId/:logNo/:tag/:type/:resourceType/:mainListType",
   async (req, res) => {
     const public_id = req.params.publicId;
-    const uploadTime = req.params.time;
+    const logNo = Number(req.params.logNo);
     const tag = req.params.tag;
     const type = req.params.type;
     const resourceType = req.params.resourceType;
@@ -1041,7 +1080,7 @@ app.delete(
           delete_object[mainListType] = delete_content;
 
           const deleted = await db.upload_log.updateOne(
-            { date: uploadTime },
+            { logNo: logNo, community: tag },
             { $pull: delete_object }
           );
 
@@ -1061,14 +1100,26 @@ app.delete(
 
 app.post("/changeAccess", async (req, res) => {
   const access = req.body.access;
-  const keywords: string[] = req.body.keywords;
+  const logNo = Number(req.body.logNo);
 
   const response = await db.upload_log.updateOne(
-    { keywords: { $all: keywords } },
+    { logNo: logNo },
     { $set: { access: access } }
   );
 
   res.status(200).json(response);
+});
+
+app.get("/get_bookmark_count/:studentId", async (req, res) => {
+  const studentId = Number(req.params.studentId);
+
+  const count = (await db.bookmarks
+    .countDocuments({ user: studentId })
+    .catch((err) => {
+      res.status(500).json({ error: err.message });
+    })) as number;
+
+  res.status(200).json(count);
 });
 
 app.post("/insertBookmark", async (req, res) => {
