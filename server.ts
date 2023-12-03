@@ -34,7 +34,7 @@ import {
 
 import { loadModel, getContext } from "./NLP.js";
 import { QuestionAndAnswer } from "@tensorflow-models/qna";
-import { on } from "events";
+import bcrypt from "bcrypt";
 
 const app = express();
 let modelLoaded = false;
@@ -49,8 +49,8 @@ dotenv.config();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    // origin: "https://rhub-6bde5.web.app",
-    origin: "http://localhost:5173",
+    origin: "https://rhub-6bde5.web.app",
+    // origin: "http://localhost:5173",
     methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
   },
 });
@@ -240,7 +240,7 @@ app.get("/getStudentByEmail/:email/:password", async (req, res) => {
   else if (user?.authenticated === 1) (status = 200), (data = user);
   else (status = 202), (data = { authenticated: 0 });
 
-  if (user) {
+  if (user && user.authenticated === 1) {
     const fetched_password = (await db.passwords
       .findOne({ student_id: user.student_id })
       .catch((err) =>
@@ -248,7 +248,8 @@ app.get("/getStudentByEmail/:email/:password", async (req, res) => {
       )) as WithId<Passwords>;
 
     if (fetched_password) {
-      if (fetched_password.password === password) {
+      const compare = await bcrypt.compare(password, fetched_password.password);
+      if (compare) {
         permission = true;
       } else {
         status = 201;
@@ -323,10 +324,14 @@ app.post("/insertUser", async (req, res) => {
   })) as InsertOneResult<User>;
 
   if (inserted.acknowledged) {
+    const saltRounds = 10;
+    const salt = await bcrypt.genSalt(saltRounds);
+    const hash = await bcrypt.hash(password, salt);
+
     await db.passwords
       .insertOne({
         student_id: user.student_id,
-        password: password,
+        password: hash,
         oldPassword: "",
       })
       .catch((err) => {
@@ -360,15 +365,19 @@ app.patch("/updatePassword/:studentId", async (req, res) => {
   const studentId = Number(req.params.studentId);
   const password = req.body.password;
 
+  const saltRounds = 10;
+  const salt = await bcrypt.genSalt(saltRounds);
+  const hash = await bcrypt.hash(password, salt);
+
   const response = await db.passwords.findOne({ student_id: studentId });
 
   if (response) {
-    if (password === response.oldPassword || password === response.password)
+    if (hash === response.oldPassword || hash === response.password)
       res.status(201).json("Old password and new password cannot be same");
     else {
       await db.passwords.updateOne(
         { student_id: studentId },
-        { $set: { password: password, oldPassword: response.password } }
+        { $set: { password: hash, oldPassword: response.password } }
       );
       res.status(200).json("Password updated");
     }
@@ -896,7 +905,6 @@ app.patch("/rateCom/:tag", async (req, res) => {
 });
 
 ///events
-
 app.get("/getEvents/:tag", (req, res) => {
   const tag = req.params.tag;
   let events: unknown[] = [];
@@ -975,6 +983,8 @@ app.get("/get_upload/:logNo/:tag", async (req, res) => {
   const logNo = Number(req.params.logNo);
   const tag = req.params.tag;
 
+  console.log(logNo, tag);
+
   const upload = await db.upload_log
     .findOne({ logNo: logNo, community: tag })
     .catch(() => res.status(500).json("Could not fetch"));
@@ -982,12 +992,12 @@ app.get("/get_upload/:logNo/:tag", async (req, res) => {
   res.status(200).json(upload);
 });
 
-app.get("/get_uploadByTitle/:title/:dateCreated", async (req, res) => {
+app.get("/getUploadByTitle/:title/:logNo", async (req, res) => {
   const title = req.params.title;
-  const dateCreated = req.params.dateCreated;
+  const dateCreated = req.params.logNo;
 
   const upload = await db.upload_log
-    .findOne({ category_name: title, date: dateCreated })
+    .findOne({ category_name: title, logNo: Number(dateCreated) })
     .catch(() => res.status(500).json("Could not fetch"));
 
   res.status(200).json(upload);

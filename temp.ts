@@ -1,5 +1,8 @@
 import bcrypt from "bcrypt";
-const ar = [{ id: 1 }, { id: 2 }, { id: 3 }];
 
-const something = ar.find((item) => item.id === 2);
-console.log(something);
+const password = "123";
+const saltRounds = 10;
+const salt = await bcrypt.genSalt(saltRounds);
+const hash = await bcrypt.hash(password, salt);
+
+console.log(hash);
