@@ -60,9 +60,9 @@ interface Upload_Log {
   date: string;
   description: string;
   keywords: string[];
-  academic: ContentTypes;
-  student: ContentTypes;
-  misc: ContentTypes;
+  academic: ContentTypes[];
+  student: ContentTypes[];
+  misc: ContentTypes[];
   community: string;
   logNo: number;
 }

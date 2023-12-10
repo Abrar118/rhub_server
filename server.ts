@@ -49,8 +49,8 @@ dotenv.config();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "https://rhub-6bde5.web.app",
-    // origin: "http://localhost:5173",
+    // origin: "https://rhub-6bde5.web.app",
+    origin: "http://localhost:5173",
     methods: ["GET", "POST", "PATCH", "DELETE", "PUT"],
   },
 });
@@ -433,8 +433,8 @@ app.get("/getMyUploads/:studentId/:comTags", async (req, res) => {
 
   const response = (await db.upload_log
     .find(
-      { community: { $in: comTags }, "academic.uploader": studentId },
-      { projection: { "academic.$": 1, _id: 0 } }
+      { community: { $in: comTags } },
+      { projection: { academic: 1, _id: 0 } }
     )
     .toArray()
     .catch((err) => {
@@ -443,8 +443,8 @@ app.get("/getMyUploads/:studentId/:comTags", async (req, res) => {
 
   const response2 = (await db.upload_log
     .find(
-      { community: { $in: comTags }, "student.uploader": studentId },
-      { projection: { "student.$": 1, _id: 0 } }
+      { community: { $in: comTags } },
+      { projection: { student: 1, _id: 0 } }
     )
     .toArray()
     .catch((err) => {
@@ -452,18 +452,21 @@ app.get("/getMyUploads/:studentId/:comTags", async (req, res) => {
     })) as WithId<Upload_Log>[];
 
   const response3 = (await db.upload_log
-    .find(
-      { community: { $in: comTags }, "misc.uploader": studentId },
-      { projection: { "misc.$": 1, _id: 0 } }
-    )
+    .find({ community: { $in: comTags } }, { projection: { misc: 1, _id: 0 } })
     .toArray()
     .catch((err) => {
       res.status(500).json({ error: err.message });
     })) as WithId<Upload_Log>[];
 
-  res
-    .status(200)
-    .json([response[0]?.academic, response2[0]?.student, response3[0]?.misc]);
+  let academic = response[0]?.academic;
+  let student = response2[0]?.student;
+  let misc = response3[0]?.misc;
+
+  // academic = academic.filter((upload) => upload.uploader === studentId);
+  // student = student.filter((upload) => upload.uploader === studentId);
+  // misc = misc.filter((upload) => upload.uploader === studentId);
+
+  res.status(200).json([response, response2, response3]);
 });
 
 //notifications
@@ -982,8 +985,6 @@ app.get("/get_uploads/:sort/:asc/:tag", (req, res) => {
 app.get("/get_upload/:logNo/:tag", async (req, res) => {
   const logNo = Number(req.params.logNo);
   const tag = req.params.tag;
-
-  console.log(logNo, tag);
 
   const upload = await db.upload_log
     .findOne({ logNo: logNo, community: tag })
