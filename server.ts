@@ -30,6 +30,7 @@ import {
   NotificationInstance,
   Invitation,
   OnlineUser,
+  ContentTypes,
 } from "./Models.js";
 
 import { loadModel, getContext } from "./NLP.js";
@@ -433,7 +434,7 @@ app.get("/getMyUploads/:studentId/:comTags", async (req, res) => {
 
   const response = (await db.upload_log
     .find(
-      { community: { $in: comTags } },
+      { community: { $in: comTags }, "academic.uploader": studentId },
       { projection: { academic: 1, _id: 0 } }
     )
     .toArray()
@@ -441,9 +442,19 @@ app.get("/getMyUploads/:studentId/:comTags", async (req, res) => {
       res.status(500).json({ error: err.message });
     })) as WithId<Upload_Log>[];
 
+  let academic: ContentTypes[] = [],
+    student: ContentTypes[] = [],
+    misc: ContentTypes[] = [];
+
+  response.forEach((log) => {
+    log.academic.forEach((upload) => {
+      academic.push(upload);
+    });
+  });
+
   const response2 = (await db.upload_log
     .find(
-      { community: { $in: comTags } },
+      { community: { $in: comTags }, "student.uploader": studentId },
       { projection: { student: 1, _id: 0 } }
     )
     .toArray()
@@ -451,22 +462,29 @@ app.get("/getMyUploads/:studentId/:comTags", async (req, res) => {
       res.status(500).json({ error: err.message });
     })) as WithId<Upload_Log>[];
 
+  response2.forEach((log) => {
+    log.student.forEach((upload) => {
+      student.push(upload);
+    });
+  });
+
   const response3 = (await db.upload_log
-    .find({ community: { $in: comTags } }, { projection: { misc: 1, _id: 0 } })
+    .find(
+      { community: { $in: comTags }, "misc.uploader": studentId },
+      { projection: { misc: 1, _id: 0 } }
+    )
     .toArray()
     .catch((err) => {
       res.status(500).json({ error: err.message });
     })) as WithId<Upload_Log>[];
 
-  let academic = response[0]?.academic;
-  let student = response2[0]?.student;
-  let misc = response3[0]?.misc;
+  response3.forEach((log) => {
+    log.misc.forEach((upload) => {
+      misc.push(upload);
+    });
+  });
 
-  // academic = academic.filter((upload) => upload.uploader === studentId);
-  // student = student.filter((upload) => upload.uploader === studentId);
-  // misc = misc.filter((upload) => upload.uploader === studentId);
-
-  res.status(200).json([response, response2, response3]);
+  res.status(200).json([academic, student, misc]);
 });
 
 //notifications
